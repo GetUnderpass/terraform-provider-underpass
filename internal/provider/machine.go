@@ -44,6 +44,13 @@ func (r *machineResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	computedString := func(desc string) schema.StringAttribute {
 		return schema.StringAttribute{MarkdownDescription: desc, Computed: true}
 	}
+	// Doesn't change when the machine's settings do (unlike its full name).
+	stableString := func(desc string) schema.StringAttribute {
+		return schema.StringAttribute{
+			MarkdownDescription: desc, Computed: true,
+			PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+		}
+	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Settings of a machine that's already in the workspace: its name, key expiry, approval and the routes it may serve. " +
 			"Machines join by installing Underpass (an `underpass_auth_key` helps); this doesn't add one. Destroying it stops managing the machine, which stays.",
@@ -77,15 +84,15 @@ func (r *machineResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				ElementType:         types.StringType,
 				Computed:            true,
 			},
-			"ipv4": computedString("The machine's address in the network."),
+			"ipv4": stableString("The machine's address in the network."),
 			"fqdn": computedString("The machine's full name."),
-			"os":   computedString("Its operating system."),
+			"os":   stableString("Its operating system."),
 			"tags": schema.SetAttribute{
 				MarkdownDescription: "Its tags (from the auth key it joined with).",
 				ElementType:         types.StringType,
 				Computed:            true,
 			},
-			"user": computedString("Who owns it (empty for tagged machines)."),
+			"user": stableString("Who owns it (empty for tagged machines)."),
 		},
 	}
 }
@@ -191,9 +198,22 @@ func (r *machineResource) Read(ctx context.Context, req resource.ReadRequest, re
 		resp.Diagnostics.AddError("Couldn't read the machine", err.Error())
 		return
 	}
+	// Just imported: take the settings the machine has, so a configuration
+	// that matches them plans no change.
+	if imported, d := req.Private.GetKey(ctx, importedKey); !d.HasError() && len(imported) > 0 {
+		if n.KeyExpiryDisabled {
+			state.KeyExpiryDisabled = types.BoolValue(true)
+		}
+		if len(n.ApprovedRoutes) > 0 {
+			state.ApprovedRoutes = stringSet(n.ApprovedRoutes)
+		}
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, importedKey, nil)...)
+	}
 	state.fill(n)
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
+
+const importedKey = "imported"
 
 func (r *machineResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan machineModel
@@ -215,4 +235,5 @@ func (r *machineResource) Delete(context.Context, resource.DeleteRequest, *resou
 func (r *machineResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("machine_id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
+	resp.Diagnostics.Append(resp.Private.SetKey(ctx, importedKey, []byte("true"))...)
 }

@@ -71,6 +71,57 @@ func fingerprint(policy json.RawMessage) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// asWritten is the policy the API keeps, without what the API adds on its
+// own (each rule's ID, empty sections), so that after an import it reads
+// the way people write it and a matching configuration plans no change.
+func asWritten(policy json.RawMessage) string {
+	var doc map[string]any
+	if json.Unmarshal(policy, &doc) != nil {
+		return string(policy)
+	}
+	// Each entry of a section (a rule, a test) loses the ID the API gave it.
+	for _, v := range doc {
+		if list, ok := v.([]any); ok {
+			for _, item := range list {
+				if entry, ok := item.(map[string]any); ok {
+					delete(entry, "id")
+				}
+			}
+		}
+	}
+	pruneEmpty(doc)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return string(policy)
+	}
+	return string(b)
+}
+
+// pruneEmpty drops, at any depth, the keys whose value is null, [] or {}:
+// the API writes out sections and fields nobody set (a test's deny: []).
+func pruneEmpty(m map[string]any) {
+	for k, v := range m {
+		switch v := v.(type) {
+		case nil:
+			delete(m, k)
+		case map[string]any:
+			pruneEmpty(v)
+			if len(v) == 0 {
+				delete(m, k)
+			}
+		case []any:
+			for _, item := range v {
+				if sub, ok := item.(map[string]any); ok {
+					pruneEmpty(sub)
+				}
+			}
+			if len(v) == 0 {
+				delete(m, k)
+			}
+		}
+	}
+}
+
 func (r *aclResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan aclModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -123,7 +174,7 @@ func (r *aclResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return // as Terraform left it: keep the configuration's wording
 	}
 	// Changed elsewhere (or imported): show what's there.
-	state.Policy = jsontypes.NewNormalizedValue(string(now))
+	state.Policy = jsontypes.NewNormalizedValue(asWritten(now))
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 	resp.Diagnostics.Append(resp.Private.SetKey(ctx, savedKey, []byte(`"`+fingerprint(now)+`"`))...)
 }

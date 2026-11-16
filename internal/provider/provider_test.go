@@ -52,3 +52,19 @@ func TestFingerprint(t *testing.T) {
 		t.Error("a different policy has the same fingerprint")
 	}
 }
+
+// What an import reads drops what the API adds (rule IDs, empty sections),
+// so a configuration written the usual way plans no change after it.
+func TestAsWritten(t *testing.T) {
+	got := asWritten(json.RawMessage(`{"rules":[{"id":"7mcv6u7kjw66","src":["*"],"dst":["tag:web"]}],"remote":[],"clipboard":[],"groups":{},"tests":[{"src":"user:a@b.co","accept":["tag:web:22"],"deny":[]}]}`))
+	want := `{"rules":[{"dst":["tag:web"],"src":["*"]}],"tests":[{"accept":["tag:web:22"],"src":"user:a@b.co"}]}`
+	if got != want {
+		t.Errorf("asWritten = %s, want %s", got, want)
+	}
+	// What people do write stays.
+	got = asWritten(json.RawMessage(`{"groups":{"group:eng":["a@b.co"]},"ssh":[{"id":"x","src":["*"]}]}`))
+	want = `{"groups":{"group:eng":["a@b.co"]},"ssh":[{"src":["*"]}]}`
+	if got != want {
+		t.Errorf("asWritten = %s, want %s", got, want)
+	}
+}

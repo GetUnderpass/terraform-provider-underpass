@@ -8,7 +8,7 @@ resource "underpass_acl" "this" {
       { src = ["*"], dst = ["tag:printers"], proto = "any", ports = ["*"] },
     ]
     tests = [
-      { src = "tom@acme.com", accept = ["tag:servers:22"] },
+      { src = "user:tom@acme.com", accept = ["tag:servers:22"] },
     ]
   })
 }
